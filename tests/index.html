@@ -38,6 +38,26 @@
         padding: 10px;
         background: #f0f0f0;
       }
+      .image-links {
+        margin-top: 20px;
+        padding: 10px;
+        background: #f8f8f8;
+        border-radius: 5px;
+      }
+      .image-links ul {
+        list-style-type: none;
+        padding-left: 20px;
+      }
+      .image-links li {
+        margin: 10px 0;
+      }
+      .image-links a {
+        color: #0066cc;
+        text-decoration: none;
+      }
+      .image-links a:hover {
+        text-decoration: underline;
+      }
     </style>
     <script>
       // 模擬並發請求
@@ -86,6 +106,14 @@
         <div>
           <img src="test.jpeg" alt="測試圖片-JPEG" />
           <img src="test.gif" alt="測試圖片-GIF" />
+          <div class="image-links">
+            <p>圖片連結：</p>
+            <ul>
+              <li><a href="test.jpeg" target="_blank">JPEG 圖片</a></li>
+              <li><a href="test.gif" target="_blank">GIF 圖片</a></li>
+            </ul>
+          </div>
         </div>
+      </div>
   </body>
 </html>
