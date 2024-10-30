@@ -3,85 +3,151 @@ import java.net.*;
 import java.util.*;
 import java.nio.charset.StandardCharsets;
 
+/**
+ * 多執行緒 Web 伺服器主類
+ * 負責監聽指定端口並處理傳入的 HTTP 請求
+ */
 public final class WebServer {
     private static final int DEFAULT_PORT = 6789;
     
     public static void main(String[] args) {
-        int port = args.length > 0 ? Integer.parseInt(args[0]) : DEFAULT_PORT;
-        
-        try (ServerSocket serverSocket = new ServerSocket(port)) {
+        int port = parsePort(args);
+        startServer(port);
+    }
+    
+    /**
+     * 從命令列參數解析端口號
+     */
+    private static int parsePort(String[] args) {
+        return args.length > 0 ? Integer.parseInt(args[0]) : DEFAULT_PORT;
+    }
+    
+    /**
+     * 啟動 Web 伺服器
+     * @param port 監聽端口
+     */
+    private static void startServer(int port) {
+        try (ServerSocket serverSocket = createServerSocket(port)) {
             System.out.println("Web Server started, listening on port: " + port);
-            
-            while (!Thread.currentThread().isInterrupted()) {
-                try {
-                    Socket clientSocket = serverSocket.accept();
-                    HttpRequest request = new HttpRequest(clientSocket);
-                    Thread thread = new Thread(request);
-                    thread.start();
-                } catch (IOException e) {
-                    System.err.println("Error handling client connection: " + e.getMessage());
-                }
-            }
+            handleConnections(serverSocket);
         } catch (IOException e) {
             System.err.println("Server startup failed: " + e.getMessage());
         }
     }
+    
+    /**
+     * 創建伺服器 Socket
+     */
+    private static ServerSocket createServerSocket(int port) throws IOException {
+        return new ServerSocket(port, 0, InetAddress.getByName("0.0.0.0"));
+    }
+    
+    /**
+     * 處理客戶端連接
+     */
+    private static void handleConnections(ServerSocket serverSocket) {
+        while (!Thread.currentThread().isInterrupted()) {
+            try {
+                Socket clientSocket = serverSocket.accept();
+                startRequestHandler(clientSocket);
+            } catch (IOException e) {
+                System.err.println("Error handling client connection: " + e.getMessage());
+            }
+        }
+    }
+    
+    /**
+     * 啟動請求處理執行緒
+     */
+    private static void startRequestHandler(Socket clientSocket) {
+        HttpRequest request = new HttpRequest(clientSocket);
+        Thread thread = new Thread(request);
+        thread.start();
+    }
 }
 
-// HTTP請求處理類，實現Runnable接口以支持多線程
+/**
+ * HTTP 請求處理類
+ * 實現 Runnable 接口以支援多執行緒處理請求
+ */
 final class HttpRequest implements Runnable {
     private static final String CRLF = "\r\n";
     private static final int BUFFER_SIZE = 8192;
     private final Socket socket;
     
-    // 構造函數，接收客戶端socket連接
+    // 請求處理相關的常量
+    private static final String HTTP_OK = "200 OK";
+    private static final String HTTP_NOT_FOUND = "404 Not Found";
+    
     public HttpRequest(Socket socket) {
         this.socket = socket;
     }
     
-    // 實現Runnable接口的run方法
     @Override
     public void run() {
         try (socket;
-             BufferedReader reader = new BufferedReader(
-                 new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
-             DataOutputStream output = new DataOutputStream(socket.getOutputStream())) {
-            
+             BufferedReader reader = createReader();
+             DataOutputStream output = createOutputStream()) {
             processRequest(reader, output);
-            
         } catch (Exception e) {
-            System.err.println("Request processing error: " + e.getMessage());
+            logError("Request processing error", e);
         }
     }
     
-    // 處理HTTP請求的主要方法
+    /**
+     * 創建輸入流讀取器
+     */
+    private BufferedReader createReader() throws IOException {
+        return new BufferedReader(
+            new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8)
+        );
+    }
+    
+    /**
+     * 創建輸出流
+     */
+    private DataOutputStream createOutputStream() throws IOException {
+        return new DataOutputStream(socket.getOutputStream());
+    }
+    
+    /**
+     * 處理 HTTP 請求
+     */
     private void processRequest(BufferedReader reader, DataOutputStream output) throws IOException {
-        // 讀取並記錄請求信息
         String requestLine = reader.readLine();
         logRequest(requestLine);
+        skipHeaders(reader);
         
-        // 讀取所有請求頭
-        while (reader.readLine().length() > 0) {
-            // 跳過請求頭
-        }
-        
-        // 解析請求的文件名
         String fileName = parseFileName(requestLine);
-        
-        // 處理文件請求
         handleFileRequest(fileName, output);
+    }
+    
+    /**
+     * 跳過請求標頭
+     */
+    private void skipHeaders(BufferedReader reader) throws IOException {
+        String line;
+        while ((line = reader.readLine()) != null && !line.isEmpty()) {
+            // 跳過所有請求標頭
+        }
     }
     
     // 處理文件請求的方法
     private void handleFileRequest(String fileName, DataOutputStream output) throws IOException {
-        try (FileInputStream fileInput = new FileInputStream(fileName)) {
+        File file = new File(fileName);
+        if (!file.exists() || !file.isFile()) {
+            // 發送404回應
+            String body = "<HTML><HEAD><TITLE>404 Not Found</TITLE></HEAD>" +
+                         "<BODY><H1>404 Not Found</H1>" +
+                         "<p>The requested file " + fileName + " was not found on this server.</p>" +
+                         "</BODY></HTML>";
+            sendResponse(output, HTTP_NOT_FOUND, "text/html", body);
+            return;
+        }
+        
+        try (FileInputStream fileInput = new FileInputStream(file)) {
             // 發送成功響應
-            sendResponse(output, "200 OK", contentType(fileName), fileInput);
-        } catch (FileNotFoundException e) {
-            // 發送404響應
-            String body = "<HTML><HEAD><TITLE>404</TITLE></HEAD>" +
-                         "<BODY><H1>404</H1></BODY></HTML>";
-            sendResponse(output, "404 Not Found", "text/html", body);
+            sendResponse(output, HTTP_OK, contentType(fileName), fileInput);
         }
     }
     
@@ -121,7 +187,15 @@ final class HttpRequest implements Runnable {
     private String parseFileName(String requestLine) {
         StringTokenizer tokens = new StringTokenizer(requestLine);
         tokens.nextToken(); // 跳過 GET
-        return "." + tokens.nextToken();
+        String fileName = tokens.nextToken();
+        
+        // 如果請求路徑是 "/"，返回 index.html
+        if (fileName.equals("/")) {
+            return "./tests/index.html";
+        }
+        
+        // 其他請求加上 tests 目錄前綴
+        return "./tests" + fileName;
     }
     
     // 記錄請求信息的方法
@@ -142,5 +216,16 @@ final class HttpRequest implements Runnable {
             return "image/jpeg";
         }
         return "application/octet-stream";
+    }
+    
+    /**
+     * 記錄錯誤信息
+     */
+    private void logError(String message, Exception e) {
+        System.err.printf("[%s] %s: %s%n", 
+            new Date(), 
+            message, 
+            e.getMessage()
+        );
     }
 }
