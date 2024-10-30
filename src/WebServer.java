@@ -24,7 +24,6 @@ public final class WebServer {
     
     /**
      * 啟動 Web 伺服器
-     * @param port 監聽端口
      */
     private static void startServer(int port) {
         try (ServerSocket serverSocket = createServerSocket(port)) {

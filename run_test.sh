@@ -18,7 +18,6 @@ if [ $? -ne 0 ]; then
 fi
 
 # 啟動服務器
-echo -e "訪問 http://localhost:6789"
 echo -e "按 Ctrl+C 停止服務器"
 
 # 運行服務器

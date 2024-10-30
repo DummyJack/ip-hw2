@@ -8,6 +8,12 @@ _Requires Java 11 or greater._
 
 ### 啟動
 
+### Windows
+
+```
+click run_test.bat
+```
+
 ### Mac
 
 ```bash
