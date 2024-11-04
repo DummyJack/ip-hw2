@@ -145,26 +145,26 @@ final class HttpRequest implements Runnable {
         }
         
         try (FileInputStream fileInput = new FileInputStream(file)) {
-            // 發送成功響應
+            // 發送成功回應
             sendResponse(output, HTTP_OK, contentType(fileName), fileInput);
         }
     }
     
-    // 發送HTTP響應的方法
+    // 發送 HTTP 回應的方法
     private void sendResponse(DataOutputStream output, String status, 
                             String contentType, FileInputStream fileInput) throws IOException {
         writeHeaders(output, status, contentType);
         sendFileContent(fileInput, output);
     }
     
-    // 發送HTTP響應的方法
+    // 發送 HTTP 回應的方法
     private void sendResponse(DataOutputStream output, String status, 
                             String contentType, String body) throws IOException {
         writeHeaders(output, status, contentType);
         output.writeBytes(body);
     }
     
-    // 發送HTTP響應頭的方法
+    // 發送 HTTP 回應頭的方法
     private void writeHeaders(DataOutputStream output, String status, 
                             String contentType) throws IOException {
         output.writeBytes("HTTP/1.1 " + status + CRLF);
