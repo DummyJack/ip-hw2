@@ -71,7 +71,6 @@ public final class WebServer {
  */
 final class HttpRequest implements Runnable {
     private static final String CRLF = "\r\n";
-    private static final int BUFFER_SIZE = 8192;
     private final Socket socket;
     
     // 請求處理相關的常量
@@ -84,11 +83,16 @@ final class HttpRequest implements Runnable {
     
     @Override
     public void run() {
-        try (socket;
-             BufferedReader reader = createReader();
-             DataOutputStream output = createOutputStream()) {
+        // 使用 try-with-resources 自動關閉資源
+        try (
+            socket;  // 客戶端連接的 Socket
+            BufferedReader reader = createReader();
+            DataOutputStream output = createOutputStream()
+        ) {
+            // 處理客戶端的 HTTP 請求
             processRequest(reader, output);
         } catch (Exception e) {
+            // 如果處理過程中發生異常，記錄錯誤信息
             logError("Request processing error", e);
         }
     }
@@ -111,75 +115,176 @@ final class HttpRequest implements Runnable {
     
     /**
      * 處理 HTTP 請求
+     * 持續處理來自同一個連接的請求，直到連接關閉或發生錯誤
      */
     private void processRequest(BufferedReader reader, DataOutputStream output) throws IOException {
-        String requestLine = reader.readLine();
-        logRequest(requestLine);
-        skipHeaders(reader);
-        
-        String fileName = parseFileName(requestLine);
-        handleFileRequest(fileName, output);
-    }
-    
-    /**
-     * 跳過請求標頭
-     */
-    private void skipHeaders(BufferedReader reader) throws IOException {
-        String line;
-        while ((line = reader.readLine()) != null && !line.isEmpty()) {
-            // 跳過所有請求標頭
+        while (!socket.isClosed()) {  // 當 socket 連接仍然開啟時持續處理請求
+            try {
+                // 讀取 HTTP 請求的第一行（包含 HTTP 方法、URL 和協議版本）
+                String requestLine = reader.readLine();
+                if (requestLine == null || requestLine.isEmpty()) {
+                    break;  // 如果請求行為空，表示客戶端可能已斷開連接
+                }
+
+                logRequest(requestLine);  // 記錄請求信息到日誌
+                
+                // 解析所有 HTTP 請求標頭
+                Map<String, String> headers = parseHeaders(reader);
+                // 檢查是否為 Keep-Alive 連接
+                boolean keepAlive = isKeepAliveRequest(headers);
+
+                // 驗證請求中的認證信息（用戶名和密碼）
+                if (validateCredentials(requestLine)) {
+                    String fileName = parseFileName(requestLine);  // 從請求 URL 解析要訪問的文件名
+                    handleFileRequest(fileName, output, keepAlive);  // 處理文件請求
+                } else {
+                    sendAuthenticationError(output, keepAlive);  // 發送認證錯誤回應
+                }
+
+                output.flush();  // 確保所有資料都已發送到客戶端
+                
+                if (!keepAlive) {
+                    break;
+                }
+            } catch (SocketException e) {
+                break;  // 客戶端關閉連接時跳出循環
+            } catch (Exception e) {
+                logError("Request processing error", e);
+                break;  // 發生錯誤時中斷處理
+            }
         }
     }
-    
-    // 處理文件請求的方法
-    private void handleFileRequest(String fileName, DataOutputStream output) throws IOException {
+
+    /**
+     * 驗證 HTTP 請求中的用戶認證資訊
+     */
+    private boolean validateCredentials(String requestLine) {
+        // 檢查請求行是否為空
+        if (requestLine == null) return false;
+        
+        try {
+            // 將請求行按空格分割成數組：[GET, /path?params, HTTP/1.1]
+            String[] parts = requestLine.split("\\s+");
+            if (parts.length < 2) return false;
+            
+            String urlPart = parts[1];
+            // 確認 URL 中 ? 符號
+            if (!urlPart.contains("?")) return false;
+            
+            // 分離並獲取查詢參數字串
+            String queryString = urlPart.split("\\?")[1];
+            // 解析查詢參數
+            Map<String, String> params = parseQueryString(queryString);
+            
+            // 從參數中獲取用戶名和密碼
+            String username = params.get("username");
+            String password = params.get("password");
+            
+            // 驗證用戶名和密碼是否匹配
+            return "admin".equals(username) && "123456".equals(password);
+        } catch (Exception e) {
+            // 如果解析過程中發生任何異常，返回認證失敗
+            return false;
+        }
+    }
+        
+    /**
+     * 解析 URL 查詢字串中的參數
+     */
+    private Map<String, String> parseQueryString(String queryString) {
+        // 創建 HashMap 來存儲解析後的參數
+        Map<String, String> params = new HashMap<>();
+        
+        // 依據 & 符號分割查詢字串，得到各個參數對
+        // 例如：["username=admin", "password=123456"]
+        String[] pairs = queryString.split("&");
+        
+        for (String pair : pairs) {
+            String[] keyValue = pair.split("=");
+            
+            // 確保參數對包含鍵和值兩個部分
+            if (keyValue.length == 2) {
+                // 將鍵值對放入 Map 中
+                params.put(keyValue[0], keyValue[1]);
+            }
+        }
+        return params;
+    }
+
+    /**
+     * 解析 HTTP 請求標頭
+     */
+    private Map<String, String> parseHeaders(BufferedReader reader) throws IOException {
+        // 創建 Map 來存儲解析後的標頭
+        Map<String, String> headers = new HashMap<>();
+        String line;
+        
+        // 持續讀取直到遇到空行（HTTP 標頭結束標誌）
+        while ((line = reader.readLine()) != null && !line.isEmpty()) {
+            // 以冒號分割標頭行，限制分割次數為 2
+            // 例如 "Host: localhost:8080" 會分割成 ["Host", "localhost:8080"]
+            String[] parts = line.split(":", 2);
+            
+            // 確保標頭行包含名稱和值兩部分
+            if (parts.length == 2) {
+                // 儲存標頭，將名稱轉換為小寫並去除首尾空白
+                headers.put(parts[0].trim().toLowerCase(), parts[1].trim());
+            }
+        }
+        return headers;
+    }
+
+    /**
+     * 檢查 HTTP 請求是否要求保持連接(Keep-Alive)
+     */
+    private boolean isKeepAliveRequest(Map<String, String> headers) {
+        // 檢查 HTTP 版本和 Connection 標頭
+        String connection = headers.get("connection");
+        
+        if (connection == null) {
+            return true;  // HTTP/1.1 的預設行為
+        }
+        
+        return !connection.equalsIgnoreCase("close");
+    }
+
+    // 處理檔案請求的方法
+    private void handleFileRequest(String fileName, DataOutputStream output, 
+                                   boolean keepAlive) throws IOException {
         File file = new File(fileName);
         if (!file.exists() || !file.isFile()) {
-            // 發送404回應
-            String body = "<HTML><HEAD><TITLE>404 Not Found</TITLE></HEAD>" +
-                         "<BODY><H1>404 Not Found</H1>" +
-                         "<p>The requested file " + fileName + " was not found on this server.</p>" +
-                         "</BODY></HTML>";
-            sendResponse(output, HTTP_NOT_FOUND, "text/html", body);
+            send404Response(output, fileName, keepAlive);
             return;
         }
-        
+
+        // 取得檔案
+        String fileType = contentType(fileName);
+        // 讀取並發送檔案內容
         try (FileInputStream fileInput = new FileInputStream(file)) {
-            // 發送成功回應
-            sendResponse(output, HTTP_OK, contentType(fileName), fileInput);
+            byte[] fileContent = fileInput.readAllBytes();
+            sendResponse(output, HTTP_OK, fileType, fileContent, keepAlive);
         }
     }
     
     // 發送 HTTP 回應的方法
     private void sendResponse(DataOutputStream output, String status, 
-                            String contentType, FileInputStream fileInput) throws IOException {
-        writeHeaders(output, status, contentType);
-        sendFileContent(fileInput, output);
-    }
-    
-    // 發送 HTTP 回應的方法
-    private void sendResponse(DataOutputStream output, String status, 
-                            String contentType, String body) throws IOException {
-        writeHeaders(output, status, contentType);
-        output.writeBytes(body);
-    }
-    
-    // 發送 HTTP 回應頭的方法
-    private void writeHeaders(DataOutputStream output, String status, 
-                            String contentType) throws IOException {
+                            String contentType, byte[] body, 
+                            boolean keepAlive) throws IOException {
+        // 寫入標頭
         output.writeBytes("HTTP/1.1 " + status + CRLF);
         output.writeBytes("Content-Type: " + contentType + CRLF);
-        output.writeBytes("Connection: close" + CRLF);
-        output.writeBytes(CRLF);
-    }
-    
-    // 發送文件內容的方法
-    private void sendFileContent(FileInputStream fis, DataOutputStream output) throws IOException {
-        byte[] buffer = new byte[BUFFER_SIZE];
-        int bytes;
-        while ((bytes = fis.read(buffer)) != -1) {
-            output.write(buffer, 0, bytes);
+        output.writeBytes("Content-Length: " + body.length + CRLF);
+        
+        // 使用 Connection 標頭來控制 keep-alive
+        if (keepAlive) {
+            output.writeBytes("Connection: keep-alive" + CRLF);
+            output.writeBytes("Keep-Alive: timeout=5, max=100" + CRLF);
+        } else {
+            output.writeBytes("Connection: close" + CRLF);
         }
+        
+        output.writeBytes(CRLF);
+        output.write(body);
     }
     
     // 解析請求的文件名的方法
@@ -187,6 +292,11 @@ final class HttpRequest implements Runnable {
         StringTokenizer tokens = new StringTokenizer(requestLine);
         tokens.nextToken(); // 跳過 GET
         String fileName = tokens.nextToken();
+        
+        // 移除查詢參數部分
+        if (fileName.contains("?")) {
+            fileName = fileName.split("\\?")[0];
+        }
         
         // 如果請求路徑是 "/"，返回 index.html
         if (fileName.equals("/")) {
@@ -214,6 +324,8 @@ final class HttpRequest implements Runnable {
         } else if (fileName.endsWith(".jpg") || fileName.endsWith(".jpeg")) {
             return "image/jpeg";
         }
+        
+        // 返回標準的二進位流類型
         return "application/octet-stream";
     }
     
@@ -226,5 +338,41 @@ final class HttpRequest implements Runnable {
             message, 
             e.getMessage()
         );
+    }
+    
+    // 發送 401 回應
+    private void sendAuthenticationError(DataOutputStream output, 
+                                       boolean keepAlive) throws IOException {
+        String body = "<!DOCTYPE html>" +
+                     "<html lang=\"zh-TW\">" +
+                     "<head>" +
+                     "<meta charset=\"UTF-8\">" +
+                     "<title>401 未授權訪問</title>" +
+                     "</head>" +
+                     "<body>" +
+                     "<h1>401 Unauthorized</h1>" +
+                     "<p>帳號或密碼錯誤，請重新輸入。</p>" +
+                     "</body></html>";
+        sendResponse(output, "401 Unauthorized", "text/html; charset=UTF-8", body.getBytes(StandardCharsets.UTF_8), keepAlive);
+    }
+
+    // 發送 404 回應
+    private void send404Response(DataOutputStream output, 
+                               String fileName,
+                               boolean keepAlive) throws IOException {
+        String body = String.format(
+            "<!DOCTYPE html>" +
+            "<html lang=\"zh-TW\">" +
+            "<head>" +
+            "<meta charset=\"UTF-8\">" +
+            "<title>找不到檔案</title>" +
+            "</head>" +
+            "<body>" +
+            "<p>找不到檔案：%s</p>" +
+            "<p>請確認檔案路徑是否正確。</p>" +
+            "</body></html>",
+            fileName
+        );
+        sendResponse(output, HTTP_NOT_FOUND, "text/html; charset=UTF-8", body.getBytes(StandardCharsets.UTF_8), keepAlive);
     }
 }

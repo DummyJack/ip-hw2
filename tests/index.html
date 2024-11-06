@@ -68,10 +68,11 @@
 
         const requests = [];
         const files = ["index.html", "test.jpeg", "test.gif"];
+        const auth = "username=admin&password=123456";
 
         for (let i = 0; i < count; i++) {
           const file = files[i % files.length];
-          requests.push(fetch(file + "?t=" + Date.now()));
+          requests.push(fetch(`${file}?${auth}&t=${Date.now()}`));
         }
 
         try {
@@ -104,13 +105,13 @@
       <div class="test-section">
         <h2>靜態資源測試</h2>
         <div>
-          <img src="test.jpeg" alt="測試圖片-JPEG" />
-          <img src="test.gif" alt="測試圖片-GIF" />
+          <img src="test.jpeg?username=admin&password=123456" alt="測試圖片-JPEG" />
+          <img src="test.gif?username=admin&password=123456" alt="測試圖片-GIF" />
           <div class="image-links">
             <p>圖片連結：</p>
             <ul>
-              <li><a href="test.jpeg" target="_blank">JPEG 圖片</a></li>
-              <li><a href="test.gif" target="_blank">GIF 圖片</a></li>
+              <li><a href="test.jpeg?username=admin&password=123456" target="_blank">JPEG 圖片</a></li>
+              <li><a href="test.gif?username=admin&password=123456" target="_blank">GIF 圖片</a></li>
             </ul>
           </div>
         </div>
