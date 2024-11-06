@@ -23,11 +23,11 @@ chmod +x run_test.sh
 
 ### 測試連結(本地)
 
-1. [網頁](http://localhost:6789)
+1. [網頁](http://localhost:6789/?username=admin&password=123456)
 
-2. [JPEG](http://localhost:6789/test.jpeg)
+2. [JPEG](http://localhost:6789/test.jpeg?username=admin&password=123456)
 
-3. [GIF](http://localhost:6789/test.gif)
+3. [GIF](http://localhost:6789/test.gif?username=admin&password=123456)
 
 ## 補充
 
